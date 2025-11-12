@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LfStashes</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="stashContainer" class="stash-container hidden">
+        <div class="stash-content">
+            <h2>Créer un Stash</h2>
+            
+            <form id="stashForm">
+                <!-- ID -->
+                <div class="form-group">
+                    <label for="stashId">ID: <span class="required">*</span></label>
+                    <input 
+                        type="text" 
+                        id="stashId" 
+                        class="form-input" 
+                        placeholder="ID unique du stash" 
+                        required
+                        maxlength="50"
+                    >
+                </div>
+                
+                <!-- Nom (Label) -->
+                <div class="form-group">
+                    <label for="stashLabel">Nom: <span class="required">*</span></label>
+                    <input 
+                        type="text" 
+                        id="stashLabel" 
+                        class="form-input" 
+                        placeholder="Nom affiché du stash" 
+                        required
+                        maxlength="100"
+                    >
+                </div>
+                
+                <!-- Slots -->
+                <div class="form-group">
+                    <label for="stashSlots">Slots:</label>
+                    <input 
+                        type="number" 
+                        id="stashSlots" 
+                        class="form-input" 
+                        placeholder="Nombre de slots (défaut: 50)" 
+                        min="1" 
+                        max="200"
+                        value="50"
+                    >
+                </div>
+                
+                <!-- Poids -->
+                <div class="form-group">
+                    <label for="stashWeight">Poids:</label>
+                    <input 
+                        type="number" 
+                        id="stashWeight" 
+                        class="form-input" 
+                        placeholder="Poids maximum en grammes (défaut: 100000)" 
+                        min="1000"
+                        value="100000"
+                    >
+                </div>
+                
+                <!-- Propriétaire -->
+                <div class="form-group">
+                    <label for="ownerType">Propriétaire: <span class="required">*</span></label>
+                    <select id="ownerType" class="form-select" required>
+                        <option value="">Sélectionner un type</option>
+                        <option value="job">Métier</option>
+                        <option value="crew">Crew</option>
+                        <option value="personal">Personnel</option>
+                        <option value="everyone">Tout le monde</option>
+                    </select>
+                </div>
+                
+                <!-- Options pour Métier -->
+                <div id="jobOptions" class="conditional-options hidden">
+                    <div class="form-group">
+                        <label for="jobName">Nom du métier:</label>
+                        <select id="jobName" class="form-select">
+                            <option value="">Chargement...</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="jobGrade">Grade requis:</label>
+                        <select id="jobGrade" class="form-select">
+                            <option value="">Sélectionner d'abord un métier</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- Options pour Crew -->
+                <div id="crewOptions" class="conditional-options hidden">
+                    <div class="form-group">
+                        <label for="crewName">Nom du crew:</label>
+                        <select id="crewName" class="form-select">
+                            <option value="">Chargement...</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- Options pour Personnel -->
+                <div id="personalOptions" class="conditional-options hidden">
+                    <div class="form-group">
+                        <label for="personalSearch">Autorisations personnelles:</label>
+                        <input
+                            type="text"
+                            id="personalSearch"
+                            class="form-input"
+                            placeholder="Rechercher (nom, prénom ou identifiant)"
+                            maxlength="60"
+                        >
+                        <small class="hint">Saisir au moins 3 caractères pour afficher des résultats.</small>
+                    </div>
+                    <div id="personalResults" class="personal-results hidden" role="listbox" aria-expanded="false">
+                        <ul id="personalResultsList"></ul>
+                    </div>
+                    <div id="personalSelected" class="personal-selected hidden">
+                        <p class="selected-title">Joueurs autorisés :</p>
+                        <div id="personalChips" class="selected-chips"></div>
+                    </div>
+                </div>
+
+                <!-- Boutons -->
+                <footer class="form-buttons">
+                    <button type="submit" id="createBtn" class="btn btn-success">Créer</button>
+                    <button type="button" id="cancelBtn" class="btn btn-danger">Annuler</button>
+                </footer>
+            </form>
+        </div>
+    </div>
+
+  <!-- Gestion des stashes -->
+  <div id="manageContainer" class="manage-container hidden" role="dialog" aria-labelledby="manage-stash-title">
+    <div class="manage-content">
+      <header class="manage-header">
+        <h2 id="manage-stash-title">Gestion des Stashes</h2>
+        <button type="button" id="closeManageBtn" class="btn btn-danger">Fermer</button>
+      </header>
+
+      <div class="search-group">
+        <input
+          type="text"
+          id="stashSearch"
+          class="form-input"
+          placeholder="Nom, id, owner..."
+        >
+      </div>
+
+      <div id="stashList" class="stash-list">
+        <!-- Liste dynamique -->
+      </div>
+
+      <footer class="pagination-controls">
+        <button type="button" class="pagination-btn" id="prevPageBtn">&laquo;</button>
+        <div id="paginationInfo" class="pagination-info">Page 1 / 1</div>
+        <button type="button" class="pagination-btn" id="nextPageBtn">&raquo;</button>
+      </footer>
+    </div>
+  </div>
+    
+    <script src="script.js"></script>
+</body>
+</html>
+
