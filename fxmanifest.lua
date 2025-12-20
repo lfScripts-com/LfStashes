@@ -34,3 +34,6 @@ server_scripts {
     '@oxmysql/lib/MySQL.lua',
     'server.lua',
 }
+
+-- Dépendance optionnelle pour LfInteract
+dependency 'LfInteract'

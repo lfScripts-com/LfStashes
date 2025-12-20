@@ -12,6 +12,80 @@ local accessibleStashes = {}
 local playerCrewId = nil
 local isUIOpen = false
 
+-- Table pour stocker les IDs des points d'interaction enregistrés (LfInteract)
+local registeredInteractionPoints = {}
+
+-- ================================================================
+-- Fonctions d'interaction LfInteract
+-- ================================================================
+
+-- Fonction pour vérifier si LfInteract est disponible
+local function IsLfInteractAvailable()
+    if not Config.Interact then
+        return false
+    end
+    
+    -- Vérifier que l'export existe
+    local lfInteract = exports['LfInteract']
+    if not lfInteract then
+        return false
+    end
+    
+    -- Vérifier si la fonction RegisterPoint existe
+    if type(lfInteract.RegisterPoint) ~= 'function' then
+        return false
+    end
+    
+    return true
+end
+
+-- Fonction pour enregistrer/mettre à jour les points d'interaction
+local function RegisterStashInteractionPoints()
+    if not IsLfInteractAvailable() then
+        return
+    end
+    
+    -- Supprimer les anciens points
+    local lfInteract = exports['LfInteract']
+    for _, pointId in ipairs(registeredInteractionPoints) do
+        if lfInteract and type(lfInteract.UnregisterPoint) == 'function' then
+            lfInteract:UnregisterPoint(pointId)
+        end
+    end
+    registeredInteractionPoints = {}
+    
+    -- Enregistrer les nouveaux points pour chaque stash accessible
+    for _, stash in ipairs(accessibleStashes) do
+        if stash.coords and stash.id then
+            local pointId = ("stash_%s"):format(stash.id)
+            local coords = stash.coords
+            
+            -- S'assurer que les coordonnées sont au bon format
+            if type(coords) == 'table' and coords.x and coords.y and coords.z then
+                local lfInteract = exports['LfInteract']
+                if lfInteract and type(lfInteract.RegisterPoint) == 'function' then
+                    lfInteract:RegisterPoint(pointId, coords, {
+                        label = ("Ouvrir %s"):format(stash.label or "Stash"),
+                        callback = function()
+                            TriggerServerEvent('lfstashes:openStash', stash.id)
+                        end
+                    })
+                    table.insert(registeredInteractionPoints, pointId)
+                end
+            end
+        end
+    end
+end
+
+-- Mettre à jour les points d'interaction quand les stashes accessibles changent
+local function UpdateStashInteractions()
+    if not IsLfInteractAvailable() then
+        return
+    end
+    
+    RegisterStashInteractionPoints()
+end
+
 -- ================================================================
 -- Fonctions utilitaires
 -- ================================================================
@@ -64,6 +138,9 @@ local function UpdateAccessibleStashes()
             table.insert(accessibleStashes, stash)
         end
     end
+    
+    -- Mettre à jour les points d'interaction si LfInteract est activé
+    UpdateStashInteractions()
 end
 
 --- Récupère l'ID du crew du joueur
@@ -105,13 +182,46 @@ end
 --- Event pour rafraîchir les stashes
 RegisterNetEvent('lfstashes:refreshStashes', function()
     ESX.TriggerServerCallback('lfstashes:getStashes', function(result)
-        stashes = result
+        stashes = result or {}
         UpdateAccessibleStashes()
+        
+        -- Forcer la mise à jour des points d'interaction après un délai
+        if Config.Interact then
+            CreateThread(function()
+                Wait(500) -- Délai pour s'assurer que tout est bien chargé
+                UpdateStashInteractions()
+            end)
+        end
     end)
 end)
 
 --- Event pour ouvrir l'inventaire d'un stash
 RegisterNetEvent('lfstashes:openInventory', function(stashId)
+    -- Cacher les points d'interaction si LfInteract est activé
+    if Config.Interact then
+        local lfInteract = exports['LfInteract']
+        if lfInteract and type(lfInteract.HideAllPoints) == 'function' then
+            lfInteract:HideAllPoints()
+        end
+        
+        -- Surveiller la fermeture de l'inventaire pour réafficher les points
+        CreateThread(function()
+            -- Attendre que l'inventaire soit ouvert
+            Wait(200)
+            
+            -- Attendre que l'inventaire soit fermé
+            while exports.ox_inventory:isOpen() do
+                Wait(100)
+            end
+            
+            -- Réafficher les points d'interaction
+            local lfInteract = exports['LfInteract']
+            if lfInteract and type(lfInteract.ShowAllPoints) == 'function' then
+                lfInteract:ShowAllPoints()
+            end
+        end)
+    end
+    
     exports.ox_inventory:openInventory('stash', stashId)
 end)
 
@@ -285,8 +395,25 @@ end)
 --- Thread pour charger les stashes au démarrage
 CreateThread(function()
     ESX.TriggerServerCallback('lfstashes:getStashes', function(result)
-        stashes = result
+        stashes = result or {}
         RefreshPlayerCrewId()
+        
+        -- Mettre à jour les points d'interaction après le chargement initial
+        if Config.Interact then
+            CreateThread(function()
+                -- Attendre que LfInteract soit disponible
+                local timeout = 0
+                while not IsLfInteractAvailable() and timeout < 50 do
+                    Wait(100)
+                    timeout = timeout + 1
+                end
+                
+                if IsLfInteractAvailable() then
+                    Wait(500) -- Délai supplémentaire pour s'assurer que tout est prêt
+                    UpdateStashInteractions()
+                end
+            end)
+        end
     end)
 end)
 
@@ -300,64 +427,120 @@ CreateThread(function()
     end
 end)
 
---- Thread pour afficher les markers et gérer l'interaction (optimisé)
-CreateThread(function()
-    while true do
-        local wait = 1200
-        local playerPed = PlayerPedId()
-        local playerCoords = GetEntityCoords(playerPed)
-        local stashCount = #accessibleStashes
-        
-        if stashCount > 0 then
-            local px, py, pz = playerCoords.x, playerCoords.y, playerCoords.z
-            local nearestDistance = 9999.0
-            local showingMarker = false
+-- ================================================================
+-- SYSTÈME D'INTERACTION (LfInteract ou ESX)
+-- ================================================================
+
+-- Thread pour vérifier périodiquement que les points d'interaction sont à jour
+if Config.Interact then
+    CreateThread(function()
+        while true do
+            Wait(5000) -- Vérifier toutes les 5 secondes
             
-            for i = 1, stashCount do
-                local stash = accessibleStashes[i]
-                local sx, sy, sz = stash.coords.x, stash.coords.y, stash.coords.z
-                
-                -- Calcul de distance au carré (optimisé)
-                local dx, dy, dz = px - sx, py - sy, pz - sz
-                local distSqr = dx * dx + dy * dy + dz * dz
-                
-                if distSqr < 400.0 then -- < 20m
-                    local dist = math.sqrt(distSqr)
-                    
-                    if dist < nearestDistance then
-                        nearestDistance = dist
+            if IsLfInteractAvailable() and #accessibleStashes > 0 then
+                -- Vérifier si tous les points sont bien enregistrés
+                local allRegistered = true
+                for _, stash in ipairs(accessibleStashes) do
+                    if stash.id and stash.coords then
+                        local pointId = ("stash_%s"):format(stash.id)
+                        local found = false
+                        for _, registeredId in ipairs(registeredInteractionPoints) do
+                            if registeredId == pointId then
+                                found = true
+                                break
+                            end
+                        end
+                        if not found then
+                            allRegistered = false
+                            break
+                        end
                     end
+                end
+                
+                -- Si des points manquent, les réenregistrer
+                if not allRegistered then
+                    UpdateStashInteractions()
+                end
+            end
+        end
+    end)
+end
+
+-- Nettoyage à l'arrêt de la ressource
+AddEventHandler('onResourceStop', function(resourceName)
+    if GetCurrentResourceName() ~= resourceName then return end
+    
+    -- Supprimer tous les points d'interaction enregistrés (si LfInteract est disponible)
+    if IsLfInteractAvailable() then
+        local lfInteract = exports['LfInteract']
+        for _, pointId in ipairs(registeredInteractionPoints) do
+            if lfInteract and type(lfInteract.UnregisterPoint) == 'function' then
+                lfInteract:UnregisterPoint(pointId)
+            end
+        end
+    end
+end)
+
+--- Thread pour afficher les markers et gérer l'interaction (ESX uniquement)
+if not Config.Interact then
+    CreateThread(function()
+        while true do
+            local wait = 1200
+            local playerPed = PlayerPedId()
+            local playerCoords = GetEntityCoords(playerPed)
+            local stashCount = #accessibleStashes
+            
+            if stashCount > 0 then
+                local px, py, pz = playerCoords.x, playerCoords.y, playerCoords.z
+                local nearestDistance = 9999.0
+                local showingMarker = false
+                
+                for i = 1, stashCount do
+                    local stash = accessibleStashes[i]
+                    local sx, sy, sz = stash.coords.x, stash.coords.y, stash.coords.z
                     
-                    if dist < 8.0 then
-                        wait = 2
-                        showingMarker = true
+                    -- Calcul de distance au carré (optimisé)
+                    local dx, dy, dz = px - sx, py - sy, pz - sz
+                    local distSqr = dx * dx + dy * dy + dz * dz
+                    
+                    if distSqr < 400.0 then -- < 20m
+                        local dist = math.sqrt(distSqr)
                         
-                        -- Dessiner le marker
-                        DrawMarker(
-                            25, sx, sy, sz - 0.98,
-                            0.0, 0.0, 0.0,
-                            0.0, 0.0, 0.0,
-                            0.3, 0.3, 0.3,
-                            9, 150, 78, 200,
-                            false, true, 2, false, nil, nil, false
-                        )
+                        if dist < nearestDistance then
+                            nearestDistance = dist
+                        end
                         
-                        if dist < 1.5 then
-                            ESX.ShowHelpNotification('Appuyez sur ~INPUT_CONTEXT~ pour ouvrir ~g~' .. stash.label)
+                        if dist < 8.0 then
+                            wait = 2
+                            showingMarker = true
                             
-                            if IsControlJustPressed(0, 38) then
-                                TriggerServerEvent('lfstashes:openStash', stash.id)
+                            -- Dessiner le marker
+                            DrawMarker(
+                                25, sx, sy, sz - 0.98,
+                                0.0, 0.0, 0.0,
+                                0.0, 0.0, 0.0,
+                                0.3, 0.3, 0.3,
+                                9, 150, 78, 200,
+                                false, true, 2, false, nil, nil, false
+                            )
+                            
+                            if dist < 1.5 then
+                                ESX.ShowHelpNotification('Appuyez sur ~INPUT_CONTEXT~ pour ouvrir ~g~' .. stash.label)
+                                
+                                if IsControlJustPressed(0, 38) then
+                                    TriggerServerEvent('lfstashes:openStash', stash.id)
+                                end
                             end
                         end
                     end
                 end
+                
+                if not showingMarker then
+                    wait = nearestDistance < 20.0 and 500 or 1200
+                end
             end
             
-            if not showingMarker then
-                wait = nearestDistance < 20.0 and 500 or 1200
-            end
+            Wait(wait)
         end
-        
-        Wait(wait)
-    end
-end)
+    end)
+end
