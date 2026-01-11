@@ -2,6 +2,7 @@
 let jobs = [];
 let crews = [];
 let currentJobGrades = [];
+let currentCrewGrades = [];
 let manageStashes = [];
 let filteredStashes = [];
 let currentPage = 1;
@@ -304,6 +305,17 @@ function closeUI() {
     document.getElementById('jobOptions').classList.add('hidden');
     document.getElementById('crewOptions').classList.add('hidden');
     document.getElementById('personalOptions').classList.add('hidden');
+    
+    // Réinitialiser les selects de grades
+    const jobGradeSelect = document.getElementById('jobGrade');
+    if (jobGradeSelect) {
+        jobGradeSelect.innerHTML = '<option value="">Sélectionner d\'abord un métier</option>';
+    }
+    
+    const crewGradeSelect = document.getElementById('crewGrade');
+    if (crewGradeSelect) {
+        crewGradeSelect.innerHTML = '<option value="">Sélectionner d\'abord un crew</option>';
+    }
 
     if (personalSelectorCreate) {
         personalSelectorCreate.reset();
@@ -528,12 +540,19 @@ async function loadJobGrades(jobName) {
     currentJobGrades = data;
     
     const gradeSelect = document.getElementById('jobGrade');
-    gradeSelect.innerHTML = '<option value="">Sélectionner un grade</option>';
+    gradeSelect.innerHTML = '';
     
+    // Sélectionner automatiquement le grade 0 (le plus bas)
+    let defaultSelected = false;
     data.forEach(grade => {
         const option = document.createElement('option');
         option.value = grade.grade;
         option.textContent = `${grade.label} (Grade ${grade.grade})`;
+        // Sélectionner le grade 0 par défaut
+        if (grade.grade === 0 && !defaultSelected) {
+            option.selected = true;
+            defaultSelected = true;
+        }
         gradeSelect.appendChild(option);
     });
 }
@@ -558,6 +577,43 @@ async function loadCrews() {
         option.textContent = crew.name;
         crewSelect.appendChild(option);
     });
+}
+
+// Fonction pour charger les grades d'un crew
+async function loadCrewGrades(crewId) {
+    const response = await post('getCrewGrades', { crewId: crewId });
+    if (!response) {
+        console.warn('Impossible de récupérer les grades pour le crew:', crewId);
+        return null;
+    }
+    const data = await response.json();
+    
+    currentCrewGrades = data;
+    
+    const gradeSelect = document.getElementById('crewGrade');
+    if (!gradeSelect) return null;
+    
+    gradeSelect.innerHTML = '';
+    
+    // Trouver le grade avec le rang le plus élevé (grade le plus bas) pour sélection par défaut
+    let defaultRang = null;
+    if (data && data.length > 0) {
+        // Les grades sont déjà triés par rang DESC (rang le plus élevé en premier)
+        defaultRang = data[0].rang;
+        
+        data.forEach(grade => {
+            const option = document.createElement('option');
+            option.value = grade.rang;
+            option.textContent = `${grade.name} (Rang ${grade.rang})`;
+            // Sélectionner le grade le plus bas par défaut (rang le plus élevé)
+            if (grade.rang === defaultRang) {
+                option.selected = true;
+            }
+            gradeSelect.appendChild(option);
+        });
+    }
+    
+    return defaultRang;
 }
 
 // Fonction pour créer un stash
@@ -595,20 +651,17 @@ function createStash() {
     
     if (ownerType === 'job') {
         const jobName = document.getElementById('jobName').value;
-        const jobGrade = parseInt(document.getElementById('jobGrade').value);
+        const jobGradeSelect = document.getElementById('jobGrade');
+        const jobGrade = jobGradeSelect.value !== '' ? parseInt(jobGradeSelect.value) : 0;
         
         if (!jobName) {
             alert('Veuillez sélectionner un métier');
             return;
         }
         
-        if (isNaN(jobGrade)) {
-            alert('Veuillez sélectionner un grade');
-            return;
-        }
-        
+        // Le grade 0 est sélectionné par défaut, donc on l'utilise même si non explicitement sélectionné
         data.jobName = jobName;
-        data.jobGrade = jobGrade;
+        data.jobGrade = isNaN(jobGrade) ? 0 : jobGrade;
     } else if (ownerType === 'crew') {
         const crewIdValue = document.getElementById('crewName').value;
         const crewId = parseInt(crewIdValue, 10);
@@ -619,6 +672,20 @@ function createStash() {
         }
         
         data.crewId = crewId;
+        
+        // Récupérer le grade sélectionné ou utiliser le grade par défaut
+        const crewGradeSelect = document.getElementById('crewGrade');
+        const selectedRang = crewGradeSelect.value !== '' ? parseInt(crewGradeSelect.value, 10) : null;
+        
+        if (selectedRang !== null && !isNaN(selectedRang)) {
+            data.crewGradeRang = selectedRang;
+        } else {
+            // Utiliser le rang par défaut (grade le plus bas) si aucun grade n'est sélectionné
+            const defaultRang = document.getElementById('crewName').dataset.defaultRang;
+            if (defaultRang) {
+                data.crewGradeRang = parseInt(defaultRang, 10);
+            }
+        }
     } else if (ownerType === 'personal') {
         const selected = personalSelectorCreate ? personalSelectorCreate.getSelected() : [];
         if (!selected.length) {
@@ -708,6 +775,24 @@ document.addEventListener('DOMContentLoaded', function() {
             loadJobGrades(jobName);
         } else {
             document.getElementById('jobGrade').innerHTML = '<option value="">Sélectionner d\'abord un métier</option>';
+        }
+    });
+    
+    // Changement du crew
+    document.getElementById('crewName').addEventListener('change', async function(e) {
+        const crewId = e.target.value;
+        
+        if (crewId) {
+            // Charger les grades et remplir le select
+            const defaultRang = await loadCrewGrades(crewId);
+            // Stocker le rang par défaut pour utilisation si aucun grade n'est sélectionné
+            document.getElementById('crewName').dataset.defaultRang = defaultRang || '';
+        } else {
+            // Réinitialiser le select des grades
+            const gradeSelect = document.getElementById('crewGrade');
+            if (gradeSelect) {
+                gradeSelect.innerHTML = '<option value="">Sélectionner d\'abord un crew</option>';
+            }
         }
     });
     
@@ -841,6 +926,12 @@ function openEditModal(stash) {
                             <option value="">Chargement...</option>
                         </select>
                     </div>
+                    <div class="form-group">
+                        <label for="editCrewGrade">Grade requis:</label>
+                        <select id="editCrewGrade" class="form-select">
+                            <option value="">Sélectionner d'abord un crew</option>
+                        </select>
+                    </div>
                 </div>
                 
                 <div id="editPersonalOptions" class="conditional-options ${personalOptionsHtml}">
@@ -956,13 +1047,16 @@ async function loadEditJobGrades(jobName, selectedGrade) {
     const data = await response.json();
     
     const select = document.getElementById('editJobGrade');
-    select.innerHTML = '<option value="">Sélectionner un grade</option>';
+    select.innerHTML = '';
+    
+    // Si aucun grade n'est sélectionné, utiliser le grade 0 par défaut
+    const gradeToSelect = selectedGrade !== undefined && selectedGrade !== null ? selectedGrade : 0;
     
     data.forEach(grade => {
         const option = document.createElement('option');
         option.value = grade.grade;
         option.textContent = `${grade.label} (Grade ${grade.grade})`;
-        if (grade.grade == selectedGrade) {
+        if (grade.grade == gradeToSelect) {
             option.selected = true;
         }
         select.appendChild(option);
@@ -977,15 +1071,75 @@ async function loadEditCrewsList(selectedCrew) {
     const select = document.getElementById('editCrewName');
     select.innerHTML = '<option value="">Sélectionner un crew</option>';
     
+    // Supprimer l'ancien listener s'il existe
+    const oldHandler = select.onchange;
+    if (oldHandler) {
+        select.removeEventListener('change', oldHandler);
+    }
+    
     data.forEach(crew => {
         const option = document.createElement('option');
         option.value = crew.id_crew;
         option.textContent = crew.name;
         if (crew.id_crew == selectedCrew) {
             option.selected = true;
+            // Charger les grades et remplir le select
+            loadEditCrewGrades(crew.id_crew, currentEditStash.crewGradeRang).then(rang => {
+                if (rang !== null) {
+                    select.dataset.defaultRang = rang;
+                }
+            });
         }
         select.appendChild(option);
     });
+    
+    // Ajouter l'event listener pour charger les grades quand un crew est sélectionné
+    select.onchange = async function(e) {
+        const crewId = e.target.value;
+        if (crewId) {
+            const defaultRang = await loadEditCrewGrades(crewId, null);
+            if (defaultRang !== null) {
+                select.dataset.defaultRang = defaultRang;
+            }
+        } else {
+            const gradeSelect = document.getElementById('editCrewGrade');
+            if (gradeSelect) {
+                gradeSelect.innerHTML = '<option value="">Sélectionner d\'abord un crew</option>';
+            }
+        }
+    };
+}
+
+async function loadEditCrewGrades(crewId, selectedRang) {
+    const response = await post('getCrewGrades', { crewId: crewId });
+    if (!response) return null;
+    const data = await response.json();
+    
+    const gradeSelect = document.getElementById('editCrewGrade');
+    if (!gradeSelect) return null;
+    
+    gradeSelect.innerHTML = '';
+    
+    let defaultRang = null;
+    if (data && data.length > 0) {
+        // Les grades sont déjà triés par rang DESC (rang le plus élevé en premier)
+        defaultRang = data[0].rang;
+        
+        // Si un rang est déjà sélectionné, l'utiliser, sinon utiliser le rang par défaut
+        const rangToSelect = selectedRang !== undefined && selectedRang !== null ? selectedRang : defaultRang;
+        
+        data.forEach(grade => {
+            const option = document.createElement('option');
+            option.value = grade.rang;
+            option.textContent = `${grade.name} (Rang ${grade.rang})`;
+            if (grade.rang == rangToSelect) {
+                option.selected = true;
+            }
+            gradeSelect.appendChild(option);
+        });
+    }
+    
+    return defaultRang;
 }
 
 function saveEdit() {
@@ -1011,20 +1165,17 @@ function saveEdit() {
     
     if (ownerType === 'job') {
         const jobName = document.getElementById('editJobName').value;
-        const jobGrade = parseInt(document.getElementById('editJobGrade').value);
+        const jobGradeSelect = document.getElementById('editJobGrade');
+        const jobGrade = jobGradeSelect.value !== '' ? parseInt(jobGradeSelect.value) : 0;
         
         if (!jobName) {
             alert('Veuillez sélectionner un métier');
             return;
         }
         
-        if (isNaN(jobGrade)) {
-            alert('Veuillez sélectionner un grade');
-            return;
-        }
-        
+        // Le grade 0 est sélectionné par défaut, donc on l'utilise même si non explicitement sélectionné
         data.jobName = jobName;
-        data.jobGrade = jobGrade;
+        data.jobGrade = isNaN(jobGrade) ? 0 : jobGrade;
     } else if (ownerType === 'crew') {
         const crewValue = document.getElementById('editCrewName').value;
         const crewId = parseInt(crewValue, 10);
@@ -1035,6 +1186,20 @@ function saveEdit() {
         }
         
         data.crewId = crewId;
+        
+        // Récupérer le grade sélectionné ou utiliser le grade par défaut
+        const crewGradeSelect = document.getElementById('editCrewGrade');
+        const selectedRang = crewGradeSelect.value !== '' ? parseInt(crewGradeSelect.value, 10) : null;
+        
+        if (selectedRang !== null && !isNaN(selectedRang)) {
+            data.crewGradeRang = selectedRang;
+        } else {
+            // Utiliser le rang par défaut (grade le plus bas) si aucun grade n'est sélectionné
+            const defaultRang = document.getElementById('editCrewName').dataset.defaultRang;
+            if (defaultRang) {
+                data.crewGradeRang = parseInt(defaultRang, 10);
+            }
+        }
     } else if (ownerType === 'personal') {
         const selected = personalSelectorEdit ? personalSelectorEdit.getSelected() : [];
         if (!selected.length) {

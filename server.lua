@@ -161,7 +161,7 @@ local function loadStashesFromFile()
         stashesCache = {}
     end
 
-    -- Initialiser crewMembers pour les stashes de type crew
+    -- Initialiser les données pour chaque type de stash
     for i = 1, #stashesCache do
         local stash = stashesCache[i]
         if stash.ownerType == 'crew' then
@@ -170,6 +170,11 @@ local function loadStashesFromFile()
         elseif stash.ownerType == 'personal' then
             stash.personalMembers = sanitizePersonalMembers(stash.personalMembers)
             stash.crewMembers = nil
+        elseif stash.ownerType == 'job' then
+            -- S'assurer que le grade est toujours défini (0 par défaut) pour les stashes de métier
+            stash.jobGrade = tonumber(stash.jobGrade) or 0
+            stash.crewMembers = nil
+            stash.personalMembers = nil
         else
             stash.crewMembers = nil
             stash.personalMembers = nil
@@ -293,6 +298,27 @@ ESX.RegisterServerCallback('lfstashes:getCrewsList', function(source, cb)
     end)
 end)
 
+--- Callback pour obtenir les grades d'un crew
+ESX.RegisterServerCallback('lfstashes:getCrewGrades', function(source, cb, crewId)
+    -- Si UseTerritory est désactivé, retourner une liste vide
+    if not Config.UseTerritory then
+        cb({})
+        return
+    end
+    
+    if not crewId then
+        cb({})
+        return
+    end
+    
+    -- Récupérer les grades triés par rang (rang le plus élevé = grade le plus bas en premier)
+    MySQL.Async.fetchAll('SELECT id_grade, name, rang FROM crew_grades WHERE id_crew = @id_crew ORDER BY rang DESC', {
+        ['@id_crew'] = tonumber(crewId)
+    }, function(result)
+        cb(result or {})
+    end)
+end)
+
 --- Callback pour obtenir tous les stashes
 ESX.RegisterServerCallback('lfstashes:getStashes', function(source, cb)
     loadStashesFromFile()
@@ -389,19 +415,25 @@ RegisterNetEvent('lfstashes:createStash', function(data)
     end
 
     -- Créer le nouveau stash
+    local ownerType = tostring(data.ownerType or 'everyone')
     local newStash = {
         id = tostring(data.id),
         label = tostring(data.label),
         slots = tonumber(data.slots) or 50,
         weight = tonumber(data.weight) or 100000,
-        ownerType = tostring(data.ownerType or 'everyone'),
+        ownerType = ownerType,
         jobName = data.jobName,
-        jobGrade = tonumber(data.jobGrade or 0) or 0,
+        jobGrade = nil,
         crewId = data.crewId and tonumber(data.crewId) or nil,
         coords = { x = data.coords.x, y = data.coords.y, z = data.coords.z },
         crewMembers = nil,
         personalMembers = sanitizePersonalMembers(data.personalMembers)
     }
+    
+    -- Si c'est un stash de métier, s'assurer que le grade est défini (0 par défaut)
+    if ownerType == 'job' then
+        newStash.jobGrade = tonumber(data.jobGrade) or 0
+    end
 
     -- Fonction pour finaliser la création
     local function finalizeCreation()
@@ -477,6 +509,7 @@ RegisterNetEvent('lfstashes:openStash', function(stashId)
 
     -- Vérifier l'accès
     local canAccess = false
+    local playerIsAdmin = isAdmin(xPlayer)
     
     if stash.ownerType == 'everyone' then
         canAccess = true
@@ -484,9 +517,15 @@ RegisterNetEvent('lfstashes:openStash', function(stashId)
         local minGrade = tonumber(stash.jobGrade or 0) or 0
         if xPlayer.job and xPlayer.job.name == stash.jobName and (xPlayer.job.grade or 0) >= minGrade then
             canAccess = true
+        elseif playerIsAdmin then
+            -- Les admins ont toujours accès aux stashes de métier
+            canAccess = true
         end
     elseif stash.ownerType == 'crew' then
-        if stash.crewId then
+        if playerIsAdmin then
+            -- Les admins ont toujours accès aux stashes de crew
+            canAccess = true
+        elseif stash.crewId then
             local crewId = tonumber(stash.crewId)
             if not crewId then
                 TriggerClientEvent('esx:showNotification', _source, '~r~Crew invalide pour ce stash.')
@@ -526,21 +565,26 @@ RegisterNetEvent('lfstashes:openStash', function(stashId)
             end
         end
     elseif stash.ownerType == 'personal' then
-        local identifier = trim(xPlayer.identifier or '')
-        if identifier ~= '' then
-            local members = stash.personalMembers or {}
-            for _, member in ipairs(members) do
-                local memberIdentifier
-                if type(member) == 'table' then
-                    memberIdentifier = member.identifier
-                elseif type(member) == 'string' then
-                    memberIdentifier = member
-                end
-                if memberIdentifier then
-                    memberIdentifier = trim(memberIdentifier)
-                    if memberIdentifier ~= '' and memberIdentifier == identifier then
-                        canAccess = true
-                        break
+        if playerIsAdmin then
+            -- Les admins ont toujours accès aux stashes personnels
+            canAccess = true
+        else
+            local identifier = trim(xPlayer.identifier or '')
+            if identifier ~= '' then
+                local members = stash.personalMembers or {}
+                for _, member in ipairs(members) do
+                    local memberIdentifier
+                    if type(member) == 'table' then
+                        memberIdentifier = member.identifier
+                    elseif type(member) == 'string' then
+                        memberIdentifier = member
+                    end
+                    if memberIdentifier then
+                        memberIdentifier = trim(memberIdentifier)
+                        if memberIdentifier ~= '' and memberIdentifier == identifier then
+                            canAccess = true
+                            break
+                        end
                     end
                 end
             end
@@ -661,9 +705,15 @@ RegisterNetEvent('lfstashes:editStash', function(data)
     stash.weight = tonumber(data.weight) or 100000
     stash.ownerType = data.ownerType
     stash.jobName = data.jobName
-    stash.jobGrade = tonumber(data.jobGrade or 0) or 0
     stash.crewId = data.crewId and tonumber(data.crewId) or nil
     stash.personalMembers = nil
+    
+    -- Si c'est un stash de métier, s'assurer que le grade est défini (0 par défaut)
+    if data.ownerType == 'job' then
+        stash.jobGrade = tonumber(data.jobGrade) or 0
+    else
+        stash.jobGrade = nil
+    end
     
     if data.updateCoords and data.coords then
         stash.coords = { x = data.coords.x, y = data.coords.y, z = data.coords.z }

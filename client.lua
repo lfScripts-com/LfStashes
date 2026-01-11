@@ -315,6 +315,13 @@ RegisterNUICallback('getCrews', function(data, cb)
     end)
 end)
 
+--- Callback pour obtenir les grades d'un crew
+RegisterNUICallback('getCrewGrades', function(data, cb)
+    ESX.TriggerServerCallback('lfstashes:getCrewGrades', function(grades)
+        cb(grades)
+    end, data.crewId)
+end)
+
 --- Callback pour obtenir la config UseTerritory
 RegisterNUICallback('getConfig', function(data, cb)
     cb({ useTerritory = Config.UseTerritory })
