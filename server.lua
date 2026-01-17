@@ -166,17 +166,21 @@ local function loadStashesFromFile()
         local stash = stashesCache[i]
         if stash.ownerType == 'crew' then
             stash.crewMembers = stash.crewMembers or {}
+            stash.crewGradeRang = stash.crewGradeRang and tonumber(stash.crewGradeRang) or nil
             stash.personalMembers = nil
         elseif stash.ownerType == 'personal' then
             stash.personalMembers = sanitizePersonalMembers(stash.personalMembers)
             stash.crewMembers = nil
+            stash.crewGradeRang = nil
         elseif stash.ownerType == 'job' then
             -- S'assurer que le grade est toujours défini (0 par défaut) pour les stashes de métier
             stash.jobGrade = tonumber(stash.jobGrade) or 0
             stash.crewMembers = nil
+            stash.crewGradeRang = nil
             stash.personalMembers = nil
         else
             stash.crewMembers = nil
+            stash.crewGradeRang = nil
             stash.personalMembers = nil
         end
     end
@@ -235,6 +239,34 @@ local function fetchCrewMembers(crewId, callback)
             end
         end
         callback(members)
+    end)
+end
+
+--- Récupère le rang du grade du joueur dans un crew
+---@param identifier string
+---@param crewId number
+---@param callback function
+local function fetchPlayerCrewGradeRang(identifier, crewId, callback)
+    if not Config.UseTerritory then
+        callback(nil)
+        return
+    end
+    
+    MySQL.Async.fetchAll([[
+        SELECT cg.rang 
+        FROM crew_membres cm 
+        JOIN crew_grades cg ON cm.id_grade = cg.id_grade 
+        WHERE cm.identifier = @identifier AND cm.id_crew = @crewId
+        LIMIT 1
+    ]], {
+        ['@identifier'] = identifier,
+        ['@crewId'] = tonumber(crewId)
+    }, function(rows)
+        if rows and rows[1] and rows[1].rang then
+            callback(tonumber(rows[1].rang))
+        else
+            callback(nil)
+        end
     end)
 end
 
@@ -425,6 +457,7 @@ RegisterNetEvent('lfstashes:createStash', function(data)
         jobName = data.jobName,
         jobGrade = nil,
         crewId = data.crewId and tonumber(data.crewId) or nil,
+        crewGradeRang = nil,
         coords = { x = data.coords.x, y = data.coords.y, z = data.coords.z },
         crewMembers = nil,
         personalMembers = sanitizePersonalMembers(data.personalMembers)
@@ -433,6 +466,11 @@ RegisterNetEvent('lfstashes:createStash', function(data)
     -- Si c'est un stash de métier, s'assurer que le grade est défini (0 par défaut)
     if ownerType == 'job' then
         newStash.jobGrade = tonumber(data.jobGrade) or 0
+    elseif ownerType == 'crew' then
+        -- Si c'est un stash de crew, stocker le grade requis (rang)
+        if data.crewGradeRang then
+            newStash.crewGradeRang = tonumber(data.crewGradeRang)
+        end
     end
 
     -- Fonction pour finaliser la création
@@ -532,37 +570,51 @@ RegisterNetEvent('lfstashes:openStash', function(stashId)
                 return
             end
 
-            -- Vérifier dans le cache
-            local members = stash.crewMembers or {}
-            for _, identifier in ipairs(members) do
-                if identifier == xPlayer.identifier then
-                    canAccess = true
-                    break
+            -- Récupérer le rang requis 
+            -- Dans le système de crew : plus le rang est BAS, plus le grade est ÉLEVÉ
+            -- Grade 1 (le plus haut) = rang 1 (le plus bas)
+            -- Grade 2 = rang 2
+            -- Grade 3 = rang 3
+            -- Donc si requiredRang = 2 (grade 2), on veut grade 2 OU grade 1 (supérieur)
+            -- Cela signifie playerRang <= requiredRang (rang 1 ou 2)
+            local requiredRang = stash.crewGradeRang and tonumber(stash.crewGradeRang) or nil
+            
+            -- Vérifier le grade du joueur dans le crew
+            fetchPlayerCrewGradeRang(xPlayer.identifier, crewId, function(playerRang)
+                if not playerRang then
+                    -- Le joueur n'est pas dans ce crew ou n'a pas de grade
+                    TriggerClientEvent('esx:showNotification', _source, '~r~Vous n\'avez pas accès à ce stash.')
+                    return
                 end
-            end
-
-            -- Si pas trouvé, recharger depuis la BDD
-            if not canAccess then
-                fetchCrewMembers(crewId, function(updatedMembers)
-                    stash.crewMembers = updatedMembers
-                    saveStashesToFile()
-
-                    local found = false
-                    for _, identifier in ipairs(updatedMembers) do
-                        if identifier == xPlayer.identifier then
-                            found = true
-                            break
-                        end
-                    end
-
-                    if found then
-                        TriggerClientEvent('lfstashes:openInventory', _source, stash.id)
-                    else
-                        TriggerClientEvent('esx:showNotification', _source, '~r~Vous n\'avez pas accès à ce stash.')
-                    end
-                end)
-                return
-            end
+                
+                -- Vérifier si le grade est suffisant
+                -- Si requiredRang est nil, tous les membres du crew ont accès
+                local hasAccess = false
+                if requiredRang then
+                    -- Le joueur doit avoir un rang <= au rang requis
+                    -- Par exemple, si requiredRang = 2 (grade 2 requis), le joueur doit avoir rang <= 2 (grade 2 ou 1)
+                    -- Si playerRang = 3 (grade 3), alors 3 <= 2 = false, pas d'accès
+                    -- Si playerRang = 2 (grade 2), alors 2 <= 2 = true, accès autorisé
+                    -- Si playerRang = 1 (grade 1), alors 1 <= 2 = true, accès autorisé
+                    hasAccess = (playerRang <= requiredRang)
+                else
+                    -- Pas de restriction de grade, vérifier juste l'appartenance au crew
+                    -- Le joueur est dans le crew (playerRang n'est pas nil)
+                    hasAccess = true
+                end
+                
+                if hasAccess then
+                    -- Déclencher la commande /me pour afficher "ouvre [stash name]"
+                    local stashLabel = stash.label or stash.id
+                    local text = ("L'individu ouvre %s"):format(stashLabel)
+                    TriggerClientEvent('3dme:shareDisplay', -1, text, _source)
+                    
+                    TriggerClientEvent('lfstashes:openInventory', _source, stash.id)
+                else
+                    TriggerClientEvent('esx:showNotification', _source, '~r~Vous n\'avez pas le grade requis pour accéder à ce stash.')
+                end
+            end)
+            return
         end
     elseif stash.ownerType == 'personal' then
         if playerIsAdmin then
@@ -592,6 +644,11 @@ RegisterNetEvent('lfstashes:openStash', function(stashId)
     end
 
     if canAccess then
+        -- Déclencher la commande /me pour afficher "ouvre [stash name]"
+        local stashLabel = stash.label or stash.id
+        local text = ("L'individu ouvre %s"):format(stashLabel)
+        TriggerClientEvent('3dme:shareDisplay', -1, text, _source)
+        
         TriggerClientEvent('lfstashes:openInventory', _source, stash.id)
     else
         TriggerClientEvent('esx:showNotification', _source, '~r~Vous n\'avez pas accès à ce stash.')
@@ -631,6 +688,12 @@ RegisterNetEvent('lfstashes:adminOpenStash', function(stashId)
     end
 
     registerStashWithOx(stash)
+    
+    -- Déclencher la commande /me pour afficher "ouvre [stash name]"
+    local stashLabel = stash.label or stash.id
+    local text = ("L'individu ouvre %s"):format(stashLabel)
+    TriggerClientEvent('3dme:shareDisplay', -1, text, _source)
+    
     TriggerClientEvent('lfstashes:openInventory', _source, stash.id)
     TriggerClientEvent('esx:showNotification', _source, '~g~Ouverture du stash.')
 end)
@@ -711,8 +774,18 @@ RegisterNetEvent('lfstashes:editStash', function(data)
     -- Si c'est un stash de métier, s'assurer que le grade est défini (0 par défaut)
     if data.ownerType == 'job' then
         stash.jobGrade = tonumber(data.jobGrade) or 0
+        stash.crewGradeRang = nil
+    elseif data.ownerType == 'crew' then
+        -- Si c'est un stash de crew, stocker le grade requis (rang)
+        stash.jobGrade = nil
+        if data.crewGradeRang then
+            stash.crewGradeRang = tonumber(data.crewGradeRang)
+        else
+            stash.crewGradeRang = nil
+        end
     else
         stash.jobGrade = nil
+        stash.crewGradeRang = nil
     end
     
     if data.updateCoords and data.coords then

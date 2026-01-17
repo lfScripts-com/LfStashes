@@ -348,7 +348,8 @@ function formatType(stash) {
         const grade = stash.jobGrade && stash.jobGrade > 0 ? ` | Grade ≥ ${stash.jobGrade}` : '';
         return `Métier • ${stash.jobName || 'Inconnu'}${grade}`;
     } else if (stash.ownerType === 'crew') {
-        return `Crew • ID ${stash.crewId || '?'}`;
+        const gradeRang = stash.crewGradeRang !== undefined && stash.crewGradeRang !== null ? ` | Rang ≥ ${stash.crewGradeRang}` : '';
+        return `Crew • ID ${stash.crewId || '?'}${gradeRang}`;
     } else if (stash.ownerType === 'personal') {
         const members = Array.isArray(stash.personalMembers) ? stash.personalMembers : [];
         if (members.length > 0) {
