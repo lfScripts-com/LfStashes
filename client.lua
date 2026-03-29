@@ -98,10 +98,7 @@ end
 -- Fonctions utilitaires
 -- ================================================================
 
---- Vérifie si le joueur peut accéder à un stash
----@param stash table
----@param playerData table
----@return boolean
+
 local function CanAccessStash(stash, playerData)
     if stash.ownerType == 'everyone' then
         return true
@@ -136,19 +133,30 @@ local function CanAccessStash(stash, playerData)
     return false
 end
 
---- Filtre les stashes accessibles par le joueur
-local function UpdateAccessibleStashes()
-    local playerData = ESX.GetPlayerData()
+local function UpdateAccessibleStashes(playerDataOverride)
+    local playerData = playerDataOverride or ESX.GetPlayerData()
     accessibleStashes = {}
-    
+
     for _, stash in ipairs(stashes) do
         if CanAccessStash(stash, playerData) then
             table.insert(accessibleStashes, stash)
         end
     end
-    
-    -- Mettre à jour les points d'interaction si LfInteract est activé
+
     UpdateStashInteractions()
+end
+
+local function shallowCopyPlayerDataWithJob(newJob)
+    local base = ESX.GetPlayerData()
+    if not base or type(newJob) ~= 'table' or not newJob.name then
+        return nil
+    end
+    local merged = {}
+    for k, v in pairs(base) do
+        merged[k] = v
+    end
+    merged.job = newJob
+    return merged
 end
 
 --- Récupère l'ID du crew du joueur
@@ -234,8 +242,16 @@ RegisterNetEvent('lfstashes:openInventory', function(stashId)
 end)
 
 --- Event pour mettre à jour quand le job change
-RegisterNetEvent('esx:setJob', function()
-    UpdateAccessibleStashes()
+RegisterNetEvent('esx:setJob', function(newJob)
+    local merged = shallowCopyPlayerDataWithJob(newJob)
+    if merged then
+        UpdateAccessibleStashes(merged)
+    else
+        CreateThread(function()
+            Wait(0)
+            UpdateAccessibleStashes()
+        end)
+    end
 end)
 
 --- Event pour mettre à jour quand le joueur se connecte
