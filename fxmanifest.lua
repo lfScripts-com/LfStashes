@@ -4,7 +4,7 @@ lua54 'yes'
 
 author 'Firgyy'
 description 'Script de gestion des stashes pour admin'
-version '1.0.5'
+version '1.0.6'
 
 escrow_ignore {
     'config.lua',
