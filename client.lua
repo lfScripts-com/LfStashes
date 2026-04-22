@@ -10,6 +10,8 @@ ESX = exports['es_extended']:getSharedObject()
 local stashes = {}
 local accessibleStashes = {}
 local playerCrewId = nil
+--- Rang du grade crew (colonne crew_grades.rang), même sémantique que le serveur (openStash)
+local playerCrewRang = nil
 local isUIOpen = false
 
 -- Table pour stocker les IDs des points d'interaction enregistrés (lfInteract)
@@ -110,9 +112,17 @@ local function CanAccessStash(stash, playerData)
             end
         end
     elseif stash.ownerType == 'crew' then
-        if playerCrewId and stash.crewId and tonumber(stash.crewId) == tonumber(playerCrewId) then
+        if not (playerCrewId and stash.crewId and tonumber(stash.crewId) == tonumber(playerCrewId)) then
+            return false
+        end
+        local requiredRang = stash.crewGradeRang and tonumber(stash.crewGradeRang) or nil
+        if not requiredRang then
             return true
         end
+        if playerCrewRang == nil then
+            return false
+        end
+        return playerCrewRang <= requiredRang
     elseif stash.ownerType == 'personal' then
         if playerData and playerData.identifier then
             local identifier = playerData.identifier
@@ -159,24 +169,29 @@ local function shallowCopyPlayerDataWithJob(newJob)
     return merged
 end
 
---- Récupère l'ID du crew du joueur
-local function RefreshPlayerCrewId()
-    -- Si UseTerritory est désactivé, ne pas charger le crew
+--- Met à jour crew + rang (aligné sur lfstashes:getPlayerCrewState / openStash serveur)
+local function RefreshPlayerCrewState()
     if not Config.UseTerritory then
         playerCrewId = nil
+        playerCrewRang = nil
         UpdateAccessibleStashes()
         return
     end
-    
+
     local playerData = ESX.GetPlayerData()
     if not playerData or not playerData.identifier then
-        -- ESX pas encore chargé, réessayer dans 1 seconde
-        SetTimeout(1000, RefreshPlayerCrewId)
+        SetTimeout(1000, RefreshPlayerCrewState)
         return
     end
-    
-    ESX.TriggerServerCallback('lfTerritory:getPlayerCrewId', function(crewId)
-        playerCrewId = crewId and tonumber(crewId) or nil
+
+    ESX.TriggerServerCallback('lfstashes:getPlayerCrewState', function(state)
+        if type(state) == 'table' then
+            playerCrewId = state.crewId and tonumber(state.crewId) or nil
+            playerCrewRang = state.rank ~= nil and tonumber(state.rank) or nil
+        else
+            playerCrewId = nil
+            playerCrewRang = nil
+        end
         UpdateAccessibleStashes()
     end)
 end
@@ -256,7 +271,12 @@ end)
 
 --- Event pour mettre à jour quand le joueur se connecte
 RegisterNetEvent('esx:playerLoaded', function()
-    RefreshPlayerCrewId()
+    RefreshPlayerCrewState()
+end)
+
+--- Serveur (lfTerritory) : sortie/entrée/changement de crew ou de rang — rafraîchir accès
+RegisterNetEvent('lfstashes:refreshCrewState', function()
+    RefreshPlayerCrewState()
 end)
 
 -- ================================================================
@@ -427,7 +447,7 @@ end)
 CreateThread(function()
     ESX.TriggerServerCallback('lfstashes:getStashes', function(result)
         stashes = result or {}
-        RefreshPlayerCrewId()
+        RefreshPlayerCrewState()
         
         -- Mettre à jour les points d'interaction après le chargement initial
         if Config.Interact then
@@ -453,7 +473,7 @@ CreateThread(function()
     while true do
         Wait(120000) -- 2 minutes
         if ESX.GetPlayerData().identifier then
-            RefreshPlayerCrewId()
+            RefreshPlayerCrewState()
         end
     end
 end)

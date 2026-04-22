@@ -270,6 +270,39 @@ local function fetchPlayerCrewGradeRang(identifier, crewId, callback)
     end)
 end
 
+--- État crew du joueur (id + rang) — aligné sur fetchPlayerCrewGradeRang / crew_membres
+ESX.RegisterServerCallback('lfstashes:getPlayerCrewState', function(source, cb)
+    if not Config.UseTerritory then
+        cb({ crewId = nil, rank = nil })
+        return
+    end
+
+    local xPlayer = ESX.GetPlayerFromId(source)
+    if not xPlayer or not xPlayer.identifier then
+        cb({ crewId = nil, rank = nil })
+        return
+    end
+
+    MySQL.Async.fetchAll([[
+        SELECT cm.id_crew, cg.rang
+        FROM crew_membres cm
+        JOIN crew_grades cg ON cm.id_grade = cg.id_grade
+        WHERE cm.identifier = @identifier
+        LIMIT 1
+    ]], {
+        ['@identifier'] = xPlayer.identifier
+    }, function(rows)
+        if rows and rows[1] then
+            cb({
+                crewId = tonumber(rows[1].id_crew),
+                rank = rows[1].rang and tonumber(rows[1].rang) or nil
+            })
+        else
+            cb({ crewId = nil, rank = nil })
+        end
+    end)
+end)
+
 --- Rafraîchit les stashes pour tous les clients
 ---@param excludeSource number|nil Source à exclure (optionnel)
 local function refreshAllClients(excludeSource)
@@ -829,3 +862,43 @@ RegisterNetEvent('lfstashes:editStash', function(data)
     
     finalizeEdit()
 end)
+
+-- ================================================================
+-- lfTerritory : rafraîchir immédiatement crew + rang côté client (accès stashes)
+-- ================================================================
+
+local function triggerClientCrewRefresh(targetSource)
+    if not targetSource then
+        return
+    end
+    TriggerClientEvent('lfstashes:refreshCrewState', targetSource)
+end
+
+local function registerTerritoryCrewHooks()
+    local function safe(name, handler)
+        AddEventHandler(name, function(...)
+            local ok, err = pcall(handler, ...)
+            if not ok then
+                print(('[lfStashes] Erreur AddEventHandler %s: %s'):format(tostring(name), tostring(err)))
+            end
+        end)
+    end
+
+    safe('lfTerritory:playerLeftCrew', function(playerSource)
+        triggerClientCrewRefresh(playerSource)
+    end)
+
+    safe('lfTerritory:playerJoinedCrew', function(playerSource)
+        triggerClientCrewRefresh(playerSource)
+    end)
+
+    safe('lfTerritory:playerChangedCrew', function(playerSource)
+        triggerClientCrewRefresh(playerSource)
+    end)
+
+    safe('lfTerritory:playerCrewRankChanged', function(playerSource)
+        triggerClientCrewRefresh(playerSource)
+    end)
+end
+
+registerTerritoryCrewHooks()
